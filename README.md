@@ -26,6 +26,20 @@ O sistema garante que o colaborador só consiga registrar o ponto (entrada/saíd
 
 ---
 
+## ⚠️ Desafios e soluções
+
+| Desafio | Solução Implementada |
+|----------|----------------------|
+| ❗ Manter o app fluido durante operações assíncronas (como autenticação e localização) | Foi adicionado um **indicador de carregamento (`CircularProgressIndicator`)** e o uso de `AnimatedSwitcher` para transições suaves. |
+| ❗ Solicitação e tratamento de permissões de localização em diferentes cenários | Implementado fluxo completo com **tratamento de exceções** e mensagens personalizadas para cada caso (`negada`, `negada permanentemente`, `serviço desativado`). |
+| ❗ Evitar travamentos ao iniciar o app sem permissões | Separado o processo de inicialização (`_inicializar`) em etapas assíncronas e não bloqueantes. |
+| ❗ Garantir segurança no registro de ponto | Criado sistema de **reautenticação via senha** antes de registrar o ponto, prevenindo uso indevido do dispositivo. |
+| ❗ Validar se o usuário está realmente no local de trabalho | Implementado cálculo de **distância geográfica com limite de 100 metros**, usando `Geolocator.distanceBetween`. |
+| ❗ Garantir boa UX nas mensagens de erro | Criado método centralizado `_mostrarMensagem()` com **SnackBars flutuantes**, exibindo alertas rápidos e consistentes. |
+
+---
+  
+
 ## 📂 Estrutura do Projeto
 
 - ib/

@@ -21,32 +21,38 @@ class _PontoViewState extends State<PontoView> {
   @override
   void initState() {
     super.initState();
-    _verificarPermissoesLocalizacao();
-    _buscarUltimoRegistro();
+    _inicializar();
+  }
+
+  Future<void> _inicializar() async {
+    await _verificarPermissoesLocalizacao();
+    await _buscarUltimoRegistro();
   }
 
   /// 🔹 Verifica e solicita permissão de localização ao abrir o app
   Future<void> _verificarPermissoesLocalizacao() async {
-    bool servicoHabilitado = await Geolocator.isLocationServiceEnabled();
-    if (!servicoHabilitado) {
-      _mostrarMensagem('Por favor, ative o serviço de localização.');
-      return;
-    }
-
-    LocationPermission permissao = await Geolocator.checkPermission();
-
-    if (permissao == LocationPermission.denied) {
-      permissao = await Geolocator.requestPermission();
-      if (permissao == LocationPermission.denied) {
-        _mostrarMensagem('Permissão de localização negada.');
+    try {
+      final servicoHabilitado = await Geolocator.isLocationServiceEnabled();
+      if (!servicoHabilitado) {
+        _mostrarMensagem('Por favor, ative o serviço de localização.');
         return;
       }
-    }
 
-    if (permissao == LocationPermission.deniedForever) {
-      _mostrarMensagem(
-        'Permissão de localização negada permanentemente. Vá nas configurações e ative manualmente.',
-      );
+      LocationPermission permissao = await Geolocator.checkPermission();
+
+      if (permissao == LocationPermission.denied) {
+        permissao = await Geolocator.requestPermission();
+      }
+
+      if (permissao == LocationPermission.denied) {
+        _mostrarMensagem('Permissão de localização negada.');
+      } else if (permissao == LocationPermission.deniedForever) {
+        _mostrarMensagem(
+          'Permissão negada permanentemente. Vá nas configurações e ative manualmente.',
+        );
+      }
+    } catch (e) {
+      _mostrarMensagem('Erro ao verificar permissões: $e');
     }
   }
 
@@ -64,11 +70,13 @@ class _PontoViewState extends State<PontoView> {
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        _ultimoTipo = snapshot.docs.first['tipo'] as String?;
-        setState(() {});
+        setState(() {
+          _ultimoTipo = snapshot.docs.first['tipo'] as String?;
+        });
       }
     } catch (e) {
       debugPrint('Erro ao buscar último registro: $e');
+      _mostrarMensagem('Erro ao carregar último registro.');
     }
   }
 
@@ -76,102 +84,97 @@ class _PontoViewState extends State<PontoView> {
   Future<void> _baterPonto(String tipo) async {
     setState(() => _carregando = true);
 
-    final user = _auth.currentUser;
-    if (user == null) {
-      setState(() => _carregando = false);
-      return;
+    try {
+      final user = _auth.currentUser;
+      if (user == null) {
+        _mostrarMensagem('Usuário não autenticado.');
+        return;
+      }
+
+      final senhaValida = await _confirmarSenha();
+      if (!senhaValida) return;
+
+      final posicao = await _obterLocalizacaoAtual();
+      if (posicao == null) return;
+
+      const latTrabalho = -22.5600;
+      const lonTrabalho = -47.4141;
+
+      final distancia = Geolocator.distanceBetween(
+        latTrabalho,
+        lonTrabalho,
+        posicao.latitude,
+        posicao.longitude,
+      );
+
+      if (distancia > 100) {
+        _mostrarMensagem('Você está fora do limite de 100 metros!');
+        return;
+      }
+
+      await _db.collection('pontos').add({
+        'uid': user.uid,
+        'data': Timestamp.now(),
+        'tipo': tipo,
+        'latitude': posicao.latitude,
+        'longitude': posicao.longitude,
+        'distancia': distancia,
+      });
+
+      setState(() => _ultimoTipo = tipo);
+      _mostrarMensagem('Ponto de $tipo registrado com sucesso!');
+    } catch (e) {
+      _mostrarMensagem('Erro ao registrar ponto: $e');
+    } finally {
+      if (mounted) setState(() => _carregando = false);
     }
-
-    final senhaValida = await _confirmarSenha();
-    if (!senhaValida) {
-      setState(() => _carregando = false);
-      return;
-    }
-
-    bool servicoHabilitado = await Geolocator.isLocationServiceEnabled();
-    if (!servicoHabilitado) {
-      _mostrarMensagem('Ative o serviço de localização!');
-      setState(() => _carregando = false);
-      return;
-    }
-
-    LocationPermission permissao = await Geolocator.checkPermission();
-    if (permissao == LocationPermission.denied ||
-        permissao == LocationPermission.deniedForever) {
-      _mostrarMensagem('Permissão de localização negada!');
-      setState(() => _carregando = false);
-      return;
-    }
-
-    final posicao = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.best,
-    );
-
-    const latTrabalho = -22.5600;
-    const lonTrabalho = -47.4141;
-
-    final distancia = Geolocator.distanceBetween(
-      latTrabalho,
-      lonTrabalho,
-      posicao.latitude,
-      posicao.longitude,
-    );
-
-    if (distancia > 100) {
-      _mostrarMensagem('Você está fora do limite de 100 metros!');
-      setState(() => _carregando = false);
-      return;
-    }
-
-    await _db.collection('pontos').add({
-      'uid': user.uid,
-      'data': Timestamp.now(),
-      'tipo': tipo,
-      'latitude': posicao.latitude,
-      'longitude': posicao.longitude,
-      'distancia': distancia,
-    });
-
-    _mostrarMensagem('Ponto de $tipo registrado com sucesso!');
-    _ultimoTipo = tipo;
-
-    setState(() => _carregando = false);
   }
 
-  /// 🔹 Confirma senha antes de registrar ponto e solicita localização
+  /// 🔹 Confirma senha antes de registrar ponto
   Future<bool> _confirmarSenha() async {
     final senhaController = TextEditingController();
     bool confirmado = false;
 
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('Confirmar Senha'),
-        content: TextField(
-          controller: senhaController,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Senha',
-            prefixIcon: Icon(Icons.lock_outline),
-          ),
+        title: const Text('Confirmação de Senha'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Digite sua senha para continuar.'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: senhaController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Senha',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
             onPressed: () async {
               try {
                 final cred = EmailAuthProvider.credential(
                   email: _auth.currentUser!.email!,
                   password: senhaController.text,
                 );
+
                 await _auth.currentUser!.reauthenticateWithCredential(cred);
                 confirmado = true;
 
-                // 🔹 Solicita localização imediatamente após confirmar senha
                 await _solicitarLocalizacaoPosConfirmacao();
-
                 Navigator.pop(context);
               } catch (_) {
-                _mostrarMensagem('Senha incorreta.');
+                _mostrarMensagem('Senha incorreta, tente novamente.');
               }
             },
             child: const Text('Confirmar'),
@@ -183,38 +186,70 @@ class _PontoViewState extends State<PontoView> {
     return confirmado;
   }
 
-  /// 🔹 Solicita autorização de localização (força a requisição após confirmar senha)
+  /// 🔹 Solicita autorização de localização após confirmar senha
   Future<void> _solicitarLocalizacaoPosConfirmacao() async {
-    bool servicoHabilitado = await Geolocator.isLocationServiceEnabled();
-    if (!servicoHabilitado) {
-      _mostrarMensagem('Por favor, ative o serviço de localização.');
-      return;
-    }
-
-    LocationPermission permissao = await Geolocator.checkPermission();
-    if (permissao == LocationPermission.denied) {
-      permissao = await Geolocator.requestPermission();
-      if (permissao == LocationPermission.denied) {
-        _mostrarMensagem('Permissão de localização negada.');
+    try {
+      bool servicoHabilitado = await Geolocator.isLocationServiceEnabled();
+      if (!servicoHabilitado) {
+        _mostrarMensagem('Ative o serviço de localização.');
         return;
       }
-    }
 
-    if (permissao == LocationPermission.deniedForever) {
-      _mostrarMensagem(
-        'Permissão de localização negada permanentemente. Vá nas configurações e ative manualmente.',
+      LocationPermission permissao = await Geolocator.checkPermission();
+      if (permissao == LocationPermission.denied) {
+        permissao = await Geolocator.requestPermission();
+        if (permissao == LocationPermission.denied) {
+          _mostrarMensagem('Permissão de localização negada.');
+          return;
+        }
+      }
+
+      if (permissao == LocationPermission.deniedForever) {
+        _mostrarMensagem(
+          'Permissão negada permanentemente. Vá nas configurações do dispositivo.',
+        );
+        return;
+      }
+
+      await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
       );
-      return;
+      _mostrarMensagem('Localização autorizada com sucesso!');
+    } catch (e) {
+      _mostrarMensagem('Erro ao solicitar localização: $e');
     }
-
-    // 🔹 Tenta pegar a localização real (força o sistema a pedir autorização)
-    await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    _mostrarMensagem('Localização autorizada com sucesso!');
   }
 
-  /// 🔹 Mostra mensagens simples na tela
+  /// 🔹 Obtém localização atual com tratamento de erro
+  Future<Position?> _obterLocalizacaoAtual() async {
+    try {
+      final permissao = await Geolocator.checkPermission();
+      if (permissao == LocationPermission.denied ||
+          permissao == LocationPermission.deniedForever) {
+        _mostrarMensagem('Permissão de localização não concedida.');
+        return null;
+      }
+
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      );
+    } catch (e) {
+      _mostrarMensagem('Erro ao obter localização: $e');
+      return null;
+    }
+  }
+
+  /// 🔹 Mostra mensagens amigáveis na tela
   void _mostrarMensagem(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
@@ -240,74 +275,77 @@ class _PontoViewState extends State<PontoView> {
         ],
       ),
       body: Center(
-        child: _carregando
-            ? const CircularProgressIndicator()
-            : Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.access_time_filled,
-                        color: Colors.indigo.shade700, size: 80),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Bem-vindo(a), ${_auth.currentUser?.email ?? 'Usuário'}',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: Colors.grey.shade800,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    ElevatedButton.icon(
-                      onPressed:
-                          podeEntrar ? () => _baterPonto('entrada') : null,
-                      icon: const Icon(Icons.login),
-                      label: const Text('Registrar Entrada'),
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        backgroundColor: Colors.green.shade600,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: _carregando
+              ? const CircularProgressIndicator()
+              : Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.access_time_filled,
+                          color: Colors.indigo.shade700, size: 80),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Bem-vindo(a), ${_auth.currentUser?.email ?? 'Usuário'}',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey.shade800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton.icon(
-                      onPressed: podeSair ? () => _baterPonto('saida') : null,
-                      icon: const Icon(Icons.logout),
-                      label: const Text('Registrar Saída'),
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        backgroundColor: Colors.red.shade600,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 30),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const HistoricoView(),
+                      const SizedBox(height: 32),
+                      ElevatedButton.icon(
+                        onPressed:
+                            podeEntrar ? () => _baterPonto('entrada') : null,
+                        icon: const Icon(Icons.login),
+                        label: const Text('Registrar Entrada'),
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 50),
+                          backgroundColor: Colors.green.shade600,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                        );
-                      },
-                      icon: const Icon(Icons.history),
-                      label: const Text('Ver Histórico'),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        side: BorderSide(color: Colors.indigo.shade600),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 20),
+                      ElevatedButton.icon(
+                        onPressed: podeSair ? () => _baterPonto('saida') : null,
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Registrar Saída'),
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 50),
+                          backgroundColor: Colors.red.shade600,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const HistoricoView(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.history),
+                        label: const Text('Ver Histórico'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 50),
+                          side: BorderSide(color: Colors.indigo.shade600),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+        ),
       ),
     );
   }

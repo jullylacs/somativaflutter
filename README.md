@@ -29,11 +29,10 @@ O sistema garante que o colaborador só consiga registrar o ponto (entrada/saíd
 ## 📂 Estrutura do Projeto
 
 ib/
-│
-├── main.dart # Arquivo principal da aplicação
-├── ponto_view.dart # Tela principal de registro de ponto
-├── historico_view.dart # Tela de histórico de pontos
-└── widgets/ # (opcional) componentes reutilizáveis
+° main.dart # Arquivo principal da aplicação
+° ponto_view.dart # Tela principal de registro de ponto
+° historico_view.dart # Tela de histórico de pontos
+° widgets/ # (opcional) componentes reutilizáveis
 
 ## 📱 Como usar
 

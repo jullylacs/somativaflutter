@@ -96,17 +96,9 @@ class _PontoViewState extends State<PontoView> {
     }
 
     LocationPermission permissao = await Geolocator.checkPermission();
-    if (permissao == LocationPermission.denied) {
-      permissao = await Geolocator.requestPermission();
-      if (permissao == LocationPermission.denied) {
-        _mostrarMensagem('Permissão de localização negada!');
-        setState(() => _carregando = false);
-        return;
-      }
-    }
-
-    if (permissao == LocationPermission.deniedForever) {
-      _mostrarMensagem('Permissão de localização permanentemente negada!');
+    if (permissao == LocationPermission.denied ||
+        permissao == LocationPermission.deniedForever) {
+      _mostrarMensagem('Permissão de localização negada!');
       setState(() => _carregando = false);
       return;
     }
@@ -115,8 +107,8 @@ class _PontoViewState extends State<PontoView> {
       desiredAccuracy: LocationAccuracy.best,
     );
 
-    const latTrabalho = -22.571053;
-    const lonTrabalho = -47.403930;
+    const latTrabalho = -22.5600;
+    const lonTrabalho = -47.4141;
 
     final distancia = Geolocator.distanceBetween(
       latTrabalho,
@@ -146,7 +138,7 @@ class _PontoViewState extends State<PontoView> {
     setState(() => _carregando = false);
   }
 
-  /// 🔹 Confirma senha antes de registrar ponto
+  /// 🔹 Confirma senha antes de registrar ponto e solicita localização
   Future<bool> _confirmarSenha() async {
     final senhaController = TextEditingController();
     bool confirmado = false;
@@ -173,6 +165,10 @@ class _PontoViewState extends State<PontoView> {
                 );
                 await _auth.currentUser!.reauthenticateWithCredential(cred);
                 confirmado = true;
+
+                // 🔹 Solicita localização imediatamente após confirmar senha
+                await _solicitarLocalizacaoPosConfirmacao();
+
                 Navigator.pop(context);
               } catch (_) {
                 _mostrarMensagem('Senha incorreta.');
@@ -183,7 +179,37 @@ class _PontoViewState extends State<PontoView> {
         ],
       ),
     );
+
     return confirmado;
+  }
+
+  /// 🔹 Solicita autorização de localização (força a requisição após confirmar senha)
+  Future<void> _solicitarLocalizacaoPosConfirmacao() async {
+    bool servicoHabilitado = await Geolocator.isLocationServiceEnabled();
+    if (!servicoHabilitado) {
+      _mostrarMensagem('Por favor, ative o serviço de localização.');
+      return;
+    }
+
+    LocationPermission permissao = await Geolocator.checkPermission();
+    if (permissao == LocationPermission.denied) {
+      permissao = await Geolocator.requestPermission();
+      if (permissao == LocationPermission.denied) {
+        _mostrarMensagem('Permissão de localização negada.');
+        return;
+      }
+    }
+
+    if (permissao == LocationPermission.deniedForever) {
+      _mostrarMensagem(
+        'Permissão de localização negada permanentemente. Vá nas configurações e ative manualmente.',
+      );
+      return;
+    }
+
+    // 🔹 Tenta pegar a localização real (força o sistema a pedir autorização)
+    await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    _mostrarMensagem('Localização autorizada com sucesso!');
   }
 
   /// 🔹 Mostra mensagens simples na tela
